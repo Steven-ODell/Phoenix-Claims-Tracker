@@ -23,7 +23,8 @@ def init_db():
                 customer_dolc DATE, insurance_state_dolc DATE,
                 description TEXT, company_adjuster TEXT, supplementals TEXT,
                 latitude REAL, longitude REAL,
-                bought INTEGER DEFAULT 0
+                bought INTEGER DEFAULT 0,
+                job_done INTEGER DEFAULT 0
             )
         """)
         
@@ -42,6 +43,8 @@ def init_db():
         columns = [c[1] for c in cursor.fetchall()]
         if 'bought' not in columns:
             conn.execute("ALTER TABLE claims ADD COLUMN bought INTEGER DEFAULT 0")
+        if 'job_done' not in columns:
+            conn.execute("ALTER TABLE claims ADD COLUMN job_done INTEGER DEFAULT 0")
             
         cursor = conn.execute("PRAGMA table_info(restricted_zones)")
         if 'name' not in [c[1] for c in cursor.fetchall()]:
@@ -72,16 +75,16 @@ def save_claim(data: dict, mode: str = "add"):
         if mode == "add":
             query = """INSERT INTO claims (bingus_id, name, address, phone, priority, worth_effort, 
                        condition, customer_dolc, insurance_state_dolc, description, company_adjuster, 
-                       supplementals, latitude, longitude, bought) 
+                       supplementals, latitude, longitude, bought, job_done) 
                        VALUES (:bingus_id, :name, :address, :phone, :priority, :worth_effort, 
                        :condition, :customer_dolc, :insurance_state_dolc, :description, :company_adjuster, 
-                       :supplementals, :latitude, :longitude, :bought)"""
+                       :supplementals, :latitude, :longitude, :bought, :job_done)"""
         else:
             query = """UPDATE claims SET name=:name, address=:address, phone=:phone, priority=:priority, 
                        worth_effort=:worth_effort, condition=:condition, customer_dolc=:customer_dolc, 
                        insurance_state_dolc=:insurance_state_dolc, description=:description, 
                        company_adjuster=:company_adjuster, supplementals=:supplementals,
-                       latitude=:latitude, longitude=:longitude, bought=:bought 
+                       latitude=:latitude, longitude=:longitude, bought=:bought, job_done=:job_done 
                        WHERE bingus_id=:bingus_id"""
         cursor.execute(query, data)
         conn.commit()
@@ -89,12 +92,12 @@ def save_claim(data: dict, mode: str = "add"):
 def get_all_claims():
     with sqlite3.connect(DB_NAME) as conn:
         df = pd.read_sql("SELECT * FROM claims", conn)
-        # Handle Date conversions
         for col in ['customer_dolc', 'insurance_state_dolc']:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col]).dt.date
         df['worth_effort'] = df['worth_effort'].astype(bool)
         df['bought'] = df['bought'].astype(bool)
+        df['job_done'] = df['job_done'].astype(bool)
         return df
 
 # --- UI MAIN ---
@@ -111,7 +114,7 @@ def main():
 
     c1, c2 = st.columns([1, 3])
     with c1:
-        zone_color = st.selectbox("Select color for new zones:", ["red", "orange", "yellow", "black", "gray"])
+        zone_color = st.selectbox("Select color for new zones:", ["Red", "Orange", "Yellow", "Black", "Gray"])
         new_zone_name = st.text_input("Name for new zone (optional):", value="")
         jump = st.selectbox("🎯 Focus Map on Claim:", ["-- Select to Zoom --"] + map_df['name'].tolist() if not map_df.empty else ["-- Select to Zoom --"])
 
@@ -124,13 +127,22 @@ def main():
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_level)
 
-    # 1. Claims
+    # 1. Claims Marker Logic
     for _, row in map_df.iterrows():
-        color = 'purple' if row['bought'] else ('red' if row['priority'] == "1-High" else ('blue' if row['priority'] == "2-Medium" else 'green'))
+        # Priority 1: If Bought, it is always Purple
+        if row['bought']:
+            color = 'purple'
+        # Priority 2: If Job Done (and not bought), it is Gray
+        elif row['job_done']:
+            color = 'gray'
+        # Priority 3: Standard priority colors
+        else:
+            color = 'red' if row['priority'] == "1-High" else ('blue' if row['priority'] == "2-Medium" else 'green')
+        
         folium.CircleMarker(
             location=[row['latitude'], row['longitude']],
             radius=7, color=color, fill=True, fill_color=color, fill_opacity=0.8,
-            tooltip=f"<b>{row['name']}</b>"
+            tooltip=f"<b>{row['name']}</b> ({'DONE' if row['job_done'] else row['priority']})"
         ).add_to(m)
 
     # 2. Drawn Zones
@@ -162,7 +174,7 @@ def main():
                 conn.commit()
                 st.rerun()
 
-    st.caption("🟣 Bought | 🔴 High | 🔵 Medium | 🟢 Low | ⬛ Restricted Zones")
+    st.caption("🟣 Bought (Priority) | 🔴 High | 🔵 Medium | 🟢 Low | ⚪ Dead (Gray) | ⬛ Restricted Zones")
 
     # --- MANAGEMENT SECTION ---
     with st.expander("🛠️ Manage Restricted Zones"):
@@ -189,6 +201,7 @@ def main():
         f_addr = st.text_input("Address (City, State, Zip)")
         f_prio = st.selectbox("Priority", ["1-High", "2-Medium", "3-Low"])
         f_bought = st.toggle("Insurance Bought?") 
+        f_done = st.toggle("Job Done? (Archives to bottom)")
         f_worth = st.toggle("Worth Effort?")
         f_cond = st.slider("Condition (1-5)", 1, 5, 3)
         f_dolc = st.date_input("Customer DOLC")
@@ -200,20 +213,26 @@ def main():
             save_claim({"bingus_id": f_bingus, "name": f_name, "address": f_addr, "phone": f_phone,
                         "priority": f_prio, "worth_effort": 1 if f_worth else 0, "condition": f_cond,
                         "customer_dolc": f_dolc, "insurance_state_dolc": f_ins, "description": f_desc,
-                        "company_adjuster": f_adj, "supplementals": f_supp, "bought": 1 if f_bought else 0}, mode="add")
+                        "company_adjuster": f_adj, "supplementals": f_supp, 
+                        "bought": 1 if f_bought else 0, "job_done": 1 if f_done else 0}, mode="add")
             st.rerun()
 
     # --- TABLE DISPLAY ---
     st.markdown("---")
-    search = st.text_input("🔍 Filter list by any keyword", "")
-    view_df = df.copy()
+    search = st.text_input("🔍 Filter list by any keyword or Bingus#", "")
+    
+    # Sorting: Job Done (Active first), Priority, Customer DOLC (Newest first)
+    view_df = df.sort_values(by=['job_done', 'priority', 'customer_dolc'], ascending=[True, True, False])
+    
     if search:
-        view_df = df[df['name'].str.contains(search, case=False, na=False) | 
-                     df['address'].str.contains(search, case=False, na=False) |
-                     df['description'].str.contains(search, case=False, na=False)]
+        view_df = view_df[view_df['name'].str.contains(search, case=False, na=False) | 
+                         view_df['address'].str.contains(search, case=False, na=False) |
+                         view_df['description'].str.contains(search, case=False, na=False) |
+                         view_df['bingus_id'].astype(str).str.contains(search, case=False, na=False)]
     
     st.dataframe(view_df.drop(columns=['latitude', 'longitude']), use_container_width=True, hide_index=True,
                  column_config={
+                     "job_done": st.column_config.CheckboxColumn("Done"),
                      "bought": st.column_config.CheckboxColumn("Bought?"),
                      "worth_effort": st.column_config.CheckboxColumn("Worth Effort?"),
                      "condition": st.column_config.ProgressColumn("Condition", min_value=1, max_value=5)
@@ -230,6 +249,7 @@ def main():
                 e_addr = st.text_input("Address", value=rec['address'])
                 e_prio = st.selectbox("Priority", ["1-High", "2-Medium", "3-Low"], index=["1-High", "2-Medium", "3-Low"].index(rec['priority']))
                 e_bought = st.toggle("Insurance Bought?", value=bool(rec['bought']))
+                e_done = st.toggle("Job Done?", value=bool(rec['job_done']))
                 e_worth = st.toggle("Worth Effort?", value=bool(rec['worth_effort']))
                 e_cond = st.slider("Condition", 1, 5, int(rec['condition']))
                 e_dolc = st.date_input("Customer DOLC", value=rec['customer_dolc'])
@@ -243,7 +263,8 @@ def main():
                     save_claim({"bingus_id": selected_id, "name": e_name, "address": e_addr, "phone": e_phone,
                                 "priority": e_prio, "worth_effort": 1 if e_worth else 0, "condition": e_cond,
                                 "customer_dolc": e_dolc, "insurance_state_dolc": e_ins, "description": e_desc,
-                                "company_adjuster": e_adj, "supplementals": e_supp, "bought": 1 if e_bought else 0}, mode="edit")
+                                "company_adjuster": e_adj, "supplementals": e_supp, 
+                                "bought": 1 if e_bought else 0, "job_done": 1 if e_done else 0}, mode="edit")
                     st.rerun()
                 if c2.form_submit_button("🗑️ Delete"):
                     with sqlite3.connect(DB_NAME) as conn: conn.execute("DELETE FROM claims WHERE bingus_id = ?", (selected_id,))
