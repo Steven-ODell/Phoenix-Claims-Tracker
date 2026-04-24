@@ -34,6 +34,7 @@ Search & Filter: Easily filter your list of claims by keyword.andas folium strea
 
 # Data Storage
 The application uses a local file database named insurance_claims_v4.db.
+Maps overlays are kept in a separate file named zone_overlays.db.
 
 The app automatically initializes the database schema upon first launch.
 
