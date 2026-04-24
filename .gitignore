@@ -19,8 +19,4 @@ env/
 .streamlit/
 *.log
 
-# Database
-# If you want to sync your claims data across machines via Git, 
-# REMOVE the line below. Otherwise, keep it to prevent 
-# committing large/sensitive database files.
 *.db
