@@ -114,7 +114,7 @@ def main():
 
     c1, c2 = st.columns([1, 3])
     with c1:
-        zone_color = st.selectbox("Select color for new zones:", ["Red", "Orange", "Yellow", "Black", "Gray"])
+        zone_color = st.selectbox("Select color for new zones:", ["red", "green", "purple", "blue", "grey", "yellow"])
         new_zone_name = st.text_input("Name for new zone (optional):", value="")
         jump = st.selectbox("🎯 Focus Map on Claim:", ["-- Select to Zoom --"] + map_df['name'].tolist() if not map_df.empty else ["-- Select to Zoom --"])
 
@@ -127,7 +127,18 @@ def main():
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_level)
 
-    # 1. Claims Marker Logic
+    # 1. Drawn Zones (Rendered FIRST so they sit below the markers)
+    with sqlite3.connect(DB_NAME) as conn:
+        saved_zones = pd.read_sql("SELECT * FROM restricted_zones", conn)
+        for _, zone in saved_zones.iterrows():
+            geo_data = json.loads(zone['geo_json'])
+            folium.GeoJson(
+                geo_data,
+                style_function=lambda x, c=zone['color']: {'fillColor': c, 'color': c, 'weight': 2, 'fillOpacity': 0.3},
+                tooltip=zone['name']
+            ).add_to(m)
+
+    # 2. Claims Marker Logic (Rendered SECOND so they sit on top and remain clickable)
     for _, row in map_df.iterrows():
         # Priority 1: If Bought, it is always Purple
         if row['bought']:
@@ -142,19 +153,8 @@ def main():
         folium.CircleMarker(
             location=[row['latitude'], row['longitude']],
             radius=7, color=color, fill=True, fill_color=color, fill_opacity=0.8,
-            tooltip=f"<b>{row['name']}</b> ({'DONE' if row['job_done'] else row['priority']})"
+            tooltip=f"<b>{row['name']}</b> (Bingus #{row['bingus_id']})<br>Status: {'DONE' if row['job_done'] else row['priority']}"
         ).add_to(m)
-
-    # 2. Drawn Zones
-    with sqlite3.connect(DB_NAME) as conn:
-        saved_zones = pd.read_sql("SELECT * FROM restricted_zones", conn)
-        for _, zone in saved_zones.iterrows():
-            geo_data = json.loads(zone['geo_json'])
-            folium.GeoJson(
-                geo_data,
-                style_function=lambda x, c=zone['color']: {'fillColor': c, 'color': c, 'weight': 2, 'fillOpacity': 0.3},
-                tooltip=zone['name']
-            ).add_to(m)
 
     # 3. Drawing tools
     Draw(draw_options={'polyline': False, 'polygon': True, 'rectangle': True, 'circle': False, 'marker': False, 'circlemarker': False}, edit_options={'edit': False}).add_to(m)
@@ -174,7 +174,7 @@ def main():
                 conn.commit()
                 st.rerun()
 
-    st.caption("🟣 Bought (Priority) | 🔴 High | 🔵 Medium | 🟢 Low | ⚪ Dead (Gray) | ⬛ Restricted Zones")
+    st.caption("🟣 Bought (Priority) | 🔴 High | 🔵 Medium | 🟢 Low | ⚪ Non-Bought Done (Gray) | ⬛ Restricted Zones")
 
     # --- MANAGEMENT SECTION ---
     with st.expander("🛠️ Manage Restricted Zones"):
