@@ -20,7 +20,7 @@ Open your terminal in the project directory.
 Launch the app using Streamlit:
 
 Bash
-'streamlit run app.py'
+`streamlit run app.py`
 The app will open in your default web browser (usually at http://localhost:8501).
 
 Data Storage
