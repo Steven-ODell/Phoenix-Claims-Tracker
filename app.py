@@ -48,7 +48,20 @@ def get_coords(address: str):
 
 def save_claim(data: dict, mode: str = "add"):
     for key in ['customer_dolc', 'insurance_state_dolc', 'snooze_until']:
-        if key in data and pd.isna(data[key]): data[key] = None
+        if key not in data:
+            continue
+        val = data[key]
+        try:
+            if pd.isna(val):
+                data[key] = None
+                continue
+        except (TypeError, ValueError):
+            pass
+        # Convert Timestamp / datetime to plain date so SQLite doesn't choke
+        if hasattr(val, 'date'):
+            data[key] = val.date()
+        elif val is not None:
+            data[key] = str(val)
     
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
@@ -91,9 +104,158 @@ def get_all_claims():
 
 # --- MAIN APP ---
 def main():
-    st.set_page_config(page_title="Phoenix Claims Tracker", layout="wide")
+    st.set_page_config(page_title="Phoenix Claims Tracker", page_icon="🌵", layout="wide")
     init_db()
-    st.title("🌵 Phoenix Neighborhood Claims Tracker")
+    # --- STYLING ---
+    st.markdown("""
+    <style>
+    /* ── Base & background ── */
+    .stApp { background: #0d0f14; }
+    .main .block-container { padding-top: 1.2rem; }
+
+    /* ── Typography ── */
+    html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
+
+    /* ── App header banner ── */
+    .kore-header {
+        background: linear-gradient(135deg, #0a160a 0%, #0d0f14 100%);
+        border: 1px solid rgb(0, 130, 120);
+        border-radius: 12px;
+        padding: 1.1rem 1.6rem;
+        margin-bottom: 1.4rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    .kore-header h1 {
+        margin: 0;
+        font-size: 1.9rem;
+        font-weight: 800;
+        background: linear-gradient(90deg, rgb(0, 130, 120), rgb(30, 140, 20));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        letter-spacing: 0.5px;
+    }
+    .kore-header .sub {
+        color: #8892a4;
+        font-size: 0.82rem;
+        margin-top: 2px;
+    }
+
+    /* ── Section headers ── */
+    h2, h3 { color: rgb(0, 130, 120) !important; font-weight: 700 !important; }
+
+    /* ── Dividers ── */
+    hr { border-color: #1a231a !important; margin: 1rem 0 !important; }
+
+    /* ── Buttons ── */
+    .stButton > button {
+        background: rgb(3, 100, 0);
+        color: #fff !important;
+        border: none;
+        border-radius: 7px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+        box-shadow: 0 2px 6px rgba(3,53,0,0.35);
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 14px rgba(3,53,0,0.5);
+    }
+    .stButton > button:active { transform: translateY(0); }
+
+    /* ── Form submit buttons ── */
+    .stFormSubmitButton > button {
+        background: rgb(3, 100, 0) !important;
+        color: #fff !important;
+        border-radius: 7px;
+        font-weight: 700;
+        border: none;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+        box-shadow: 0 2px 6px rgba(0,130,120,0.35);
+    }
+    .stFormSubmitButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 14px rgba(0,130,120,0.5);
+    }
+
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {
+        background: #0a120a !important;
+        border-right: 2px solid  rgb(0, 130, 120) !important;
+    }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 { color: rgb(30, 140, 20) !important; }
+
+    /* ── Alert/error cards ── */
+    [data-testid="stAlert"][data-baseweb="notification"] {
+        background: #120f0f !important;
+        border-left: 4px solid  rgb(0, 130, 120) !important;
+        border-radius: 8px !important;
+    }
+
+    /* ── Success boxes ── */
+    [data-baseweb="notification"][kind="positive"] {
+        background: #0a160a !important;
+        border-left: 4px solid rgb(30, 140, 20) !important;
+        border-radius: 8px !important;
+    }
+
+    /* ── Expanders ── */
+    [data-testid="stExpander"] {
+        background: #0a120a !important;
+        border: 1px solid #1a231a !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stExpander"]:hover { border-color: rgb(0, 130, 120) !important; }
+
+    /* ── Dataframe container ── */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #1a231a;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    /* ── Text inputs / selects ── */
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-baseweb="select"] {
+        background: #0d160d !important;
+        border-color: #1a2e1a !important;
+        color: #e0e0e0 !important;
+        border-radius: 7px !important;
+    }
+
+    /* ── Slider accent ── */
+    [data-testid="stSlider"] [data-baseweb="slider"] [role="slider"] {
+        background: rgb(0, 130, 120) !important;
+    }
+
+    /* ── Metric cards (filter row) ── */
+    .filter-pill {
+        background: #0d160d;
+        border: 1px solid #1a2e1a;
+        border-radius: 20px;
+        padding: 0.3rem 0.8rem;
+        font-size: 0.82rem;
+        display: inline-block;
+        color: #c0c8d8;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Styled header banner (replaces plain st.title)
+    st.markdown("""
+    <div class="kore-header">
+        <span style="font-size:2.4rem;">🌵</span>
+        <div>
+            <h1>Phoenix Claims Tracker</h1>
+            <div class="sub">&nbsp;·&nbsp; Neighborhood Insurance Dashboard</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     df = get_all_claims()
     today = pd.Timestamp.now().normalize()
@@ -120,7 +282,7 @@ def main():
 
                 col_info.write(f"📞 **Phone:** {row['phone']}  |  **Cust Last:** {cust_date}  |  **Ins Last:** {ins_date}")
 
-                # Quick-log row: log a call against one or both dates right from the alert
+                # Quick-log a call against one specific date right from the alert
                 q1, q2 = col_info.columns(2)
                 if q1.button("📞 Called Customer", key=f"cc_{bid}"):
                     with sqlite3.connect(DB_NAME) as conn:
@@ -344,16 +506,23 @@ def main():
                 e_adj = st.text_area("Adjuster", value=rec['company_adjuster'] if rec['company_adjuster'] else "")
                 e_supp = st.text_area("Supplementals", value=rec['supplementals'] if rec['supplementals'] else "")
                 
+                snooze_label = rec['snooze_until'].strftime('%Y-%m-%d') if pd.notnull(rec['snooze_until']) else None
+                clear_snooze = st.checkbox(
+                    f"💤 Clear Snooze (currently snoozed until {snooze_label})" if snooze_label else "💤 Clear Snooze (no active snooze)",
+                    value=False,
+                    disabled=snooze_label is None
+                )
+
                 c1, c2, _ = st.columns([1, 1, 2])
                 if c1.form_submit_button("Update"):
                     lat, lon = get_coords(e_addr) if e_addr != rec['address'] else (rec['latitude'], rec['longitude'])
-                    
+
                     save_claim({
                         "bingus_id": selected_nimbus, "name": e_name, "address": e_addr, "phone": e_phone,
                         "priority": e_prio, "worth_effort": int(e_worth), "condition": e_cond,
                         "customer_dolc": e_dolc, "insurance_state_dolc": e_ins, "description": e_desc,
                         "company_adjuster": e_adj, "supplementals": e_supp, "bought": int(e_bought),
-                        "job_done": int(e_done), "snooze_until": rec['snooze_until'],
+                        "job_done": int(e_done), "snooze_until": None if clear_snooze else rec['snooze_until'],
                         "latitude": lat, "longitude": lon
                     }, mode="edit")
                     st.success("Claim Updated!")
