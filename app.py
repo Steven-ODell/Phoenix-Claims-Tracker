@@ -102,9 +102,24 @@ def get_all_claims():
             df[col] = pd.to_datetime(df[col])
         return df
 
+
+# --- GEOMETRY HELPER ---
+def point_in_polygon(lat, lon, coords):
+    """Ray-casting point-in-polygon. coords = list of [lng, lat] GeoJSON pairs."""
+    x, y = lon, lat
+    inside = False
+    j = len(coords) - 1
+    for i in range(len(coords)):
+        xi, yi = coords[i][0], coords[i][1]
+        xj, yj = coords[j][0], coords[j][1]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
 # --- MAIN APP ---
 def main():
-    st.set_page_config(page_title="Phoenix Claims Tracker", page_icon="🌵", layout="wide")
+    st.set_page_config(page_title="Kore Claims Tracker", page_icon="🫰", layout="wide")
     init_db()
     # --- STYLING ---
     st.markdown("""
@@ -215,7 +230,7 @@ def main():
     [data-testid="stDataFrame"] {
         border: 1px solid #1a231a;
         border-radius: 8px;
-        overflow: hidden;
+        overflow: visible;
     }
 
     /* ── Text inputs / selects ── */
@@ -249,9 +264,9 @@ def main():
     # Styled header banner (replaces plain st.title)
     st.markdown("""
     <div class="kore-header">
-        <span style="font-size:2.4rem;">🌵</span>
+        <span style="font-size:2.4rem;"></span>
         <div>
-            <h1>Phoenix Claims Tracker</h1>
+            <h1>Kore Claims Tracker</h1>
             <div class="sub">&nbsp;·&nbsp; Neighborhood Insurance Dashboard</div>
         </div>
     </div>
@@ -313,10 +328,11 @@ def main():
     # --- 2. MAP & AUTO-SAVE ZONES ---
     st.markdown("---")
     
-    col_title, col_name, col_picker = st.columns([2, 1, 1])
+    col_title, col_mode, col_name, col_picker = st.columns([2, 1, 1, 1])
     col_title.subheader("Neighborhood Map & Highlights")
-    active_name = col_name.text_input("🏷️ Zone Name:", "No Soliciting")
-    active_color = col_picker.selectbox("🖌️ Draw Color:", ["Red","Purple", "Blue" "Black", "Orange", "Yellow"])
+    draw_mode = col_mode.radio("✏️ Draw Mode:", ["Save Zone", "Analyze Area"], horizontal=False)
+    active_name  = col_name.text_input("🏷️ Zone Name:","Renters", disabled=(draw_mode == "Analyze Area"))
+    active_color = col_picker.selectbox("🖌️ Draw Color:", ["Red", "Purple", "Blue", "Black", "Orange", "Yellow"], disabled=(draw_mode == "Analyze Area"))
     
     # NEW UI: Map Filter Checkboxes
     st.markdown("**Filter Map Markers:**")
@@ -383,20 +399,52 @@ def main():
     # Render Map
     map_output = st_folium(m, width=1400, height=550)
 
-    # === AUTO SAVE LOGIC ===
+    # === DRAW HANDLER ===
     if map_output and map_output.get("last_active_drawing"):
         drawn_shape = map_output["last_active_drawing"]
         geom_str = json.dumps(drawn_shape["geometry"], sort_keys=True)
-        
-        is_new = True
-        for z in saved_zones_list:
-            if json.dumps(z.get("geometry"), sort_keys=True) == geom_str:
-                is_new = False
-                break
-                
-        if is_new:
-            save_zone(drawn_shape, active_color, active_name)
-            st.rerun()
+        coords = drawn_shape["geometry"]["coordinates"][0]  # outer ring
+
+        if draw_mode == "Analyze Area":
+            # --- AREA STATS ---
+            if not map_df.empty and 'marker_color' in map_df.columns:
+                inside = map_df[map_df.apply(
+                    lambda r: point_in_polygon(r['latitude'], r['longitude'], coords), axis=1
+                )]
+            else:
+                inside = pd.DataFrame()
+
+            st.markdown("### 📊 Area Analysis")
+            if inside.empty:
+                st.info("No claims found inside the drawn area.")
+            else:
+                overdue_inside = inside[
+                    ( ((today - inside['customer_dolc']).dt.days >= 3) |
+                      ((today - inside['insurance_state_dolc']).dt.days >= 3) ) &
+                    (inside['job_done'] == 0) &
+                    ((inside['snooze_until'].isna()) | (inside['snooze_until'] <= today))
+                ]
+                a1, a2, a3, a4, a5 = st.columns(5)
+                a1.metric("📍 Total Claims",    len(inside))
+                a2.metric("🟣 Bought",          int(inside['bought'].sum()))
+                a3.metric("✅ Job Done",         int(inside['job_done'].sum()))
+                a4.metric("⭐ Worth Effort",     int(inside['worth_effort'].sum()))
+                a5.metric("🚨 Need Follow-up",  len(overdue_inside))
+
+                with st.expander("📋 Claims in this area", expanded=False):
+                    show_cols = ['bingus_id','name','phone','priority','bought','job_done','worth_effort']
+                    st.dataframe(inside[show_cols].rename(columns={'bingus_id':'Nimbus#'}),
+                                 width='stretch', hide_index=True)
+        else:
+            # --- SAVE ZONE (existing behavior) ---
+            is_new = True
+            for z in saved_zones_list:
+                if json.dumps(z.get("geometry"), sort_keys=True) == geom_str:
+                    is_new = False
+                    break
+            if is_new:
+                save_zone(drawn_shape, active_color, active_name)
+                st.rerun()
 
     # Silent Delete Expander
     with st.expander("🗑️ Manage Drawn Zones"):
@@ -470,12 +518,12 @@ def main():
     done_df   = view_df[view_df['job_done'] == 1].drop(columns=['latitude', 'longitude'])
 
     # Active jobs — fully sortable by clicking any column header
-    st.dataframe(active_df, use_container_width=True, hide_index=True, column_config=COLUMN_CONFIG)
+    st.dataframe(active_df, width='stretch', hide_index=True, column_config=COLUMN_CONFIG)
 
     # Completed jobs — collapsed by default, always pinned below active table
     with st.expander(f"✅ Completed Jobs ({len(done_df)})", expanded=False):
         if not done_df.empty:
-            st.dataframe(done_df, use_container_width=True, hide_index=True, column_config=COLUMN_CONFIG)
+            st.dataframe(done_df, width='stretch', hide_index=True, column_config=COLUMN_CONFIG)
         else:
             st.caption("No completed jobs yet.")
 
