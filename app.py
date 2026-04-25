@@ -219,6 +219,7 @@ def main():
                     delete_zone(z['id'])
                     st.rerun()
 
+    # Render Map (Full Width)
     # --- 3. SIDEBAR FULL ENTRY ---
     with st.sidebar.form("new_entry", clear_on_submit=True):
         st.header("📝 New Claim")
@@ -253,10 +254,21 @@ def main():
     search = st.text_input("🔍 Search Database by Name or Nimbus#", "")
 
     COLUMN_CONFIG = {
+        "bingus_id": "Nimbus#",
+        "name": "Name",
+        "address": "Address",
+        "phone": "Phone",
+        "priotity": "Priority",
+        "customer_dolc": "Customer DOLC",
+        "insurance_state_dolc": "Insurance DOLC",
+        "worth_effort": "Worth Effort",
+        "description": "Description",
+        "company_adjuster": "Company/Insurance-Details",
+        "supplementals": "Supplementals",
         "job_done": st.column_config.CheckboxColumn("Done"),
         "bought": st.column_config.CheckboxColumn("Bought"),
         "worth_effort": st.column_config.CheckboxColumn("Worth Effort?"),
-        "condition": st.column_config.ProgressColumn("Cond", min_value=1, max_value=5)
+        "condition": st.column_config.ProgressColumn("Condition", min_value=1, max_value=5)
     }
 
     view_df = df.copy()
