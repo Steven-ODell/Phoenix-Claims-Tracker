@@ -4,10 +4,10 @@ A personal tool to track insurance claims in the Phoenix area, visualize them on
 
 ### A PA opens it in the morning and in 5 minutes knows:
 
--Who to call
--Where the bought jobs are clustered for routing
--Who's worth a door knock vs a write-off
--What's snoozed and why
+- Who to call
+- Where the bought jobs are clustered for routing
+- Who's worth a door knock vs a write-off
+- What's snoozed and why
 
 ---
 
