@@ -101,31 +101,48 @@ def main():
     # --- 1. NOTIFICATION CENTER ---
     st.subheader("🔔 Follow-up Alerts")
     
+    # NEW LOGIC: Triggers if either Customer OR Insurance date is >= 3 days old
     overdue = df[
-        ((today - df['customer_dolc']).dt.days >= 3) & 
+        ( ((today - df['customer_dolc']).dt.days >= 3) | ((today - df['insurance_state_dolc']).dt.days >= 3) ) & 
         (df['job_done'] == 0) & 
         ((df['snooze_until'].isna()) | (df['snooze_until'] <= today))
     ]
 
     if not overdue.empty:
         for _, row in overdue.iterrows():
-            last_date = row['customer_dolc'].strftime('%Y-%m-%d') if pd.notnull(row['customer_dolc']) else "Unknown"
-            
+            cust_date = row['customer_dolc'].strftime('%Y-%m-%d') if pd.notnull(row['customer_dolc']) else "N/A"
+            ins_date = row['insurance_state_dolc'].strftime('%Y-%m-%d') if pd.notnull(row['insurance_state_dolc']) else "N/A"
+            bid = row['bingus_id']
+
             with st.container():
-                st.error(f"🚨 **NAME:** {row['name']}   |   **NIMBUS#:** {row['bingus_id']}")
+                st.error(f"🚨 **NAME:** {row['name']}   |   **NIMBUS#:** {bid}")
                 col_info, col_act = st.columns([2, 1])
-                col_info.write(f"📞 **Phone:** {row['phone']}  |  📅 **Last Contacted:** {last_date}")
-                
-                snooze_val = col_act.selectbox("Snooze (Days):", list(range(1, 8)), key=f"s_val_{row['bingus_id']}")
-                c1, c2 = col_act.columns(2)
-                if c1.button("✅ Log Done", key=f"ok_{row['bingus_id']}"):
+
+                col_info.write(f"📞 **Phone:** {row['phone']}  |  **Cust Last:** {cust_date}  |  **Ins Last:** {ins_date}")
+
+                # Quick-log row: log a call against one or both dates right from the alert
+                q1, q2 = col_info.columns(2)
+                if q1.button("📞 Called Customer", key=f"cc_{bid}"):
                     with sqlite3.connect(DB_NAME) as conn:
-                        conn.execute("UPDATE claims SET customer_dolc = ?, snooze_until = NULL WHERE bingus_id = ?", (today.date(), row['bingus_id']))
+                        conn.execute("UPDATE claims SET customer_dolc = ?, snooze_until = NULL WHERE bingus_id = ?", (today.date(), bid))
                     st.rerun()
-                if c2.button("💤 Snooze", key=f"sz_{row['bingus_id']}"):
+                if q2.button("📋 Called Insurance", key=f"ci_{bid}"):
+                    with sqlite3.connect(DB_NAME) as conn:
+                        conn.execute("UPDATE claims SET insurance_state_dolc = ?, snooze_until = NULL WHERE bingus_id = ?", (today.date(), bid))
+                    st.rerun()
+
+                snooze_val = col_act.selectbox("Snooze (Days):", list(range(1, 8)), key=f"s_val_{bid}")
+                c1, c2 = col_act.columns(2)
+
+                if c1.button("✅ Log Done", key=f"ok_{bid}"):
+                    with sqlite3.connect(DB_NAME) as conn:
+                        conn.execute("UPDATE claims SET customer_dolc = ?, insurance_state_dolc = ?, snooze_until = NULL WHERE bingus_id = ?", (today.date(), today.date(), bid))
+                    st.rerun()
+
+                if c2.button("💤 Snooze", key=f"sz_{bid}"):
                     until = (today + timedelta(days=snooze_val)).date()
                     with sqlite3.connect(DB_NAME) as conn:
-                        conn.execute("UPDATE claims SET snooze_until = ? WHERE bingus_id = ?", (until, row['bingus_id']))
+                        conn.execute("UPDATE claims SET snooze_until = ? WHERE bingus_id = ?", (until, bid))
                     st.rerun()
                 st.markdown("---")
     else:
@@ -137,8 +154,17 @@ def main():
     col_title, col_name, col_picker = st.columns([2, 1, 1])
     col_title.subheader("Neighborhood Map & Highlights")
     active_name = col_name.text_input("🏷️ Zone Name:", "No Soliciting")
-    active_color = col_picker.selectbox("🖌️ Draw Color:", ["red", "purple", "blue", "black", "orange", "yellow"])
+    active_color = col_picker.selectbox("🖌️ Draw Color:", ["Red","Purple", "Blue" "Black", "Orange", "Yellow"])
     
+    # NEW UI: Map Filter Checkboxes
+    st.markdown("**Filter Map Markers:**")
+    f1, f2, f3, f4, f5 = st.columns(5)
+    show_purple = f1.checkbox("🟣 Bought (Purple)", value=True)
+    show_red    = f2.checkbox("🔴 High (Red)", value=True)
+    show_blue   = f3.checkbox("🔵 Medium (Blue)", value=True)
+    show_green  = f4.checkbox("🟢 Low (Green)", value=True)
+    show_gray   = f5.checkbox("⚫ Done (Gray)", value=True)
+
     map_df = df.dropna(subset=['latitude', 'longitude']).copy()
     m = folium.Map(location=[33.4484, -112.0740], zoom_start=11)
     
@@ -157,24 +183,34 @@ def main():
                 tooltip=zone['name']
             ).add_to(m)
 
-    # Load Claim Markers
-    for _, row in map_df.iterrows():
-        if row['job_done'] and not row['bought']:
-            marker_color = 'gray'          # Done, never bought → grey (closed out)
-        elif row['bought']:
-            marker_color = 'purple'        # Bought (done or not) → purple
-        elif row['priority'] == '1-High':
-            marker_color = 'red'
-        elif row['priority'] == '2-Medium':
-            marker_color = 'blue'
-        else:
-            marker_color = 'green'
+    # Determine colors and apply filters
+    def assign_color(row):
+        if row['job_done'] and not row['bought']: return 'gray'
+        if row['bought']: return 'purple'
+        if row['priority'] == '1-High': return 'red'
+        if row['priority'] == '2-Medium': return 'blue'
+        return 'green'
         
-        folium.CircleMarker(
-            location=[row['latitude'], row['longitude']],
-            radius=8, color=marker_color, fill=True, fill_opacity=0.8,
-            tooltip=f"{row['name']} (Nimbus #{row['bingus_id']})"
-        ).add_to(m)
+    if not map_df.empty:
+        map_df['marker_color'] = map_df.apply(assign_color, axis=1)
+        
+        # Build allowed list based on checkboxes
+        allowed = []
+        if show_purple: allowed.append('purple')
+        if show_red: allowed.append('red')
+        if show_blue: allowed.append('blue')
+        if show_green: allowed.append('green')
+        if show_gray: allowed.append('gray')
+
+        filtered_map_df = map_df[map_df['marker_color'].isin(allowed)]
+
+        # Load Claim Markers (Filtered)
+        for _, row in filtered_map_df.iterrows():
+            folium.CircleMarker(
+                location=[row['latitude'], row['longitude']],
+                radius=8, color=row['marker_color'], fill=True, fill_opacity=0.8,
+                tooltip=f"{row['name']} (Nimbus #{row['bingus_id']})"
+            ).add_to(m)
 
     # Drawing Tools
     Draw(
@@ -184,16 +220,6 @@ def main():
 
     # Render Map
     map_output = st_folium(m, width=1400, height=550)
-
-    # Map Legend
-    st.markdown("""
-        **📍 Dot Legend:** &nbsp;&nbsp; 
-        🟣 **Bought (Active or Done)** &nbsp; | &nbsp; 
-        🔴 **High Priority** &nbsp; | &nbsp; 
-        🔵 **Medium Priority** &nbsp; | &nbsp; 
-        🟢 **Low Priority** &nbsp; | &nbsp; 
-        ⚫ **Job Done (Not Bought)**
-    """)
 
     # === AUTO SAVE LOGIC ===
     if map_output and map_output.get("last_active_drawing"):
@@ -219,7 +245,6 @@ def main():
                     delete_zone(z['id'])
                     st.rerun()
 
-    # Render Map (Full Width)
     # --- 3. SIDEBAR FULL ENTRY ---
     with st.sidebar.form("new_entry", clear_on_submit=True):
         st.header("📝 New Claim")
@@ -258,7 +283,7 @@ def main():
         "name": "Name",
         "address": "Address",
         "phone": "Phone",
-        "priotity": "Priority",
+        "priority": "Priority", 
         "customer_dolc": "Customer DOLC",
         "insurance_state_dolc": "Insurance DOLC",
         "worth_effort": "Worth Effort",
